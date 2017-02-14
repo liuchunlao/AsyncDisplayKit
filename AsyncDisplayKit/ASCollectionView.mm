@@ -26,6 +26,7 @@
 #import <AsyncDisplayKit/_ASCollectionViewCell.h>
 #import <AsyncDisplayKit/_ASDisplayLayer.h>
 #import <AsyncDisplayKit/ASCollectionViewLayoutFacilitatorProtocol.h>
+#import <AsyncDisplayKit/ASPagerNode.h>
 #import <AsyncDisplayKit/ASSectionContext.h>
 #import <AsyncDisplayKit/ASCollectionView+Undeprecated.h>
 #import <AsyncDisplayKit/_ASHierarchyChangeSet.h>
@@ -93,6 +94,8 @@ static NSString * const kReuseIdentifier = @"_ASCollectionReuseIdentifier";
   NSMutableSet *_registeredSupplementaryKinds;
   
   CGPoint _deceleratingVelocity;
+
+  BOOL _zeroContentInsets;
   
   ASCollectionViewInvalidationStyle _nextLayoutInvalidationStyle;
   
@@ -582,6 +585,16 @@ static NSString * const kReuseIdentifier = @"_ASCollectionReuseIdentifier";
 - (ASRangeTuningParameters)tuningParametersForRangeMode:(ASLayoutRangeMode)rangeMode rangeType:(ASLayoutRangeType)rangeType
 {
   return [_rangeController tuningParametersForRangeMode:rangeMode rangeType:rangeType];
+}
+
+- (void)setZeroContentInsets:(BOOL)zeroContentInsets
+{
+  _zeroContentInsets = zeroContentInsets;
+}
+
+- (BOOL)zeroContentInsets
+{
+  return _zeroContentInsets;
 }
 
 - (CGSize)calculatedSizeForNodeAtIndexPath:(NSIndexPath *)indexPath
@@ -1346,10 +1359,6 @@ static NSString * const kReuseIdentifier = @"_ASCollectionReuseIdentifier";
   
   // To ensure _maxSizeForNodesConstrainedSize is up-to-date for every usage, this call to super must be done last
   [super layoutSubviews];
-    
-  if (_zeroContentInsets) {
-    self.contentInset = UIEdgeInsetsZero;
-  }
   
   // Update range controller immediately if possible & needed.
   // Calling -updateIfNeeded in here with self.window == nil (early in the collection view's life)
@@ -1868,6 +1877,28 @@ static NSString * const kReuseIdentifier = @"_ASCollectionReuseIdentifier";
   if (visible) {
     [self _checkForBatchFetching];
   }
+
+  // They are using the deprecated zeroContentInsets flag and we just entered the window.
+  // Travel up the responder chain to find the owning view controller, and set its
+  // automaticallyAdjustsScrollViewInsets to NO on their behalf, if needed.
+  // Our previous implementation of this – manually setting contentInset inside
+  // layoutSubviews – was nothing but trouble.
+  if (visible && _zeroContentInsets) {
+    for (UIResponder *resp = self; resp != nil; resp = [resp nextResponder]) {
+      if (UIViewController *vc = ASDynamicCast(resp, UIViewController)) {
+        if (vc.automaticallyAdjustsScrollViewInsets) {
+          if ([self.collectionNode isKindOfClass:[ASPagerNode class]]) {
+            // It's a pager, log a special message:
+            NSLog(@"AsyncDisplayKit: Setting automaticallyAdjustsScrollViewInsets=NO on view controller that owns ASPagerNode. You should do this on your own. View controller: %@", vc);
+          } else {
+            NSLog(@"AsyncDisplayKit: Use of deprecated flag `ASCollectionView.zeroContentInsets` – we will set automaticallyAdjustsScrollViewInsets=NO on the owning view controller for you instead. View controller: %@", vc);
+          }
+          vc.automaticallyAdjustsScrollViewInsets = NO;
+        }
+        break;
+      }
+    }
+  }
 }
 
 #pragma mark ASCALayerExtendedDelegate
@@ -1911,19 +1942,11 @@ static NSString * const kReuseIdentifier = @"_ASCollectionReuseIdentifier";
     BOOL changedInNonScrollingDirection = (fixedHorizontally && newBounds.size.width != lastUsedSize.width) || (fixedVertically && newBounds.size.height != lastUsedSize.height);
 
     if (changedInNonScrollingDirection) {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-      // This actually doesn't perform an animation, but prevents the transaction block from being processed in the
-      // data controller's prevent animation block that would interrupt an interrupted relayout happening in an animation block
-      // ie. ASCollectionView bounds change on rotation or multi-tasking split view resize.
-      [self performBatchAnimated:YES updates:^{
-        [_dataController relayoutAllNodes];
-      } completion:nil];
+      [_dataController relayoutAllNodes];
+      [_dataController waitUntilAllUpdatesAreCommitted];
       // We need to ensure the size requery is done before we update our layout.
-      [self waitUntilAllUpdatesAreCommitted];
       [self.collectionViewLayout invalidateLayout];
     }
-#pragma clang diagnostic pop
   }
 }
 
