@@ -1359,6 +1359,10 @@ static NSString * const kReuseIdentifier = @"_ASCollectionReuseIdentifier";
   
   // To ensure _maxSizeForNodesConstrainedSize is up-to-date for every usage, this call to super must be done last
   [super layoutSubviews];
+    
+  if (_zeroContentInsets) {
+    self.contentInset = UIEdgeInsetsZero;
+  }
   
   // Update range controller immediately if possible & needed.
   // Calling -updateIfNeeded in here with self.window == nil (early in the collection view's life)
@@ -1876,28 +1880,6 @@ static NSString * const kReuseIdentifier = @"_ASCollectionReuseIdentifier";
   // we will fetch visible area + leading screens, so we need to check.
   if (visible) {
     [self _checkForBatchFetching];
-  }
-
-  // They are using the deprecated zeroContentInsets flag and we just entered the window.
-  // Travel up the responder chain to find the owning view controller, and set its
-  // automaticallyAdjustsScrollViewInsets to NO on their behalf, if needed.
-  // Our previous implementation of this – manually setting contentInset inside
-  // layoutSubviews – was nothing but trouble.
-  if (visible && _zeroContentInsets) {
-    for (UIResponder *resp = self; resp != nil; resp = [resp nextResponder]) {
-      if (UIViewController *vc = ASDynamicCast(resp, UIViewController)) {
-        if (vc.automaticallyAdjustsScrollViewInsets) {
-          if ([self.collectionNode isKindOfClass:[ASPagerNode class]]) {
-            // It's a pager, log a special message:
-            NSLog(@"AsyncDisplayKit: Setting automaticallyAdjustsScrollViewInsets=NO on view controller that owns ASPagerNode. You should do this on your own. View controller: %@", vc);
-          } else {
-            NSLog(@"AsyncDisplayKit: Use of deprecated flag `ASCollectionView.zeroContentInsets` – we will set automaticallyAdjustsScrollViewInsets=NO on the owning view controller for you instead. View controller: %@", vc);
-          }
-          vc.automaticallyAdjustsScrollViewInsets = NO;
-        }
-        break;
-      }
-    }
   }
 }
 
